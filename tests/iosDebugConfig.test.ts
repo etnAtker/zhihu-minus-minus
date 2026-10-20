@@ -22,6 +22,7 @@ test('default identity and transport permissions remain those of the base app', 
   expect(config.name).toBe(baseConfig.name);
   expect(config.slug).toBe(baseConfig.slug);
   expect(config.scheme).toBe(baseConfig.scheme);
+  expect(config.android?.package).toBe(baseConfig.android?.package);
   expect(config.ios?.bundleIdentifier).toBe(baseConfig.ios?.bundleIdentifier);
   expect(config.ios?.infoPlist).toEqual(baseConfig.ios?.infoPlist);
 });
@@ -43,7 +44,10 @@ test('development variant has a separate identity and can connect to LAN Metro',
       NSAllowsLocalNetworking: true,
     },
   });
-  expect(config.android).toMatchObject(baseConfig.android ?? {});
+  expect(config.android).toMatchObject({
+    ...baseConfig.android,
+    package: `${baseConfig.android?.package}.dev`,
+  });
 });
 
 test('development bundle identifier can be kept consistent with a signing setup', () => {

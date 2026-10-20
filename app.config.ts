@@ -143,6 +143,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       : withoutFirebasePlugins(baseConfig.plugins),
     android: {
       ...baseConfig.android,
+      ...(developmentVariant
+        ? { package: `${baseConfig.android?.package}.dev` }
+        : {}),
       ...(androidGoogleServicesFile
         ? { googleServicesFile: androidGoogleServicesFile }
         : {}),

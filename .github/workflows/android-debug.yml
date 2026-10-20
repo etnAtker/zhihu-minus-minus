@@ -1,0 +1,110 @@
+name: Android Debug
+
+on:
+  push:
+    branches:
+      - chore/ios-debug-build
+      - debug/issue-135
+    paths:
+      - .github/workflows/android-debug.yml
+      - app.config.ts
+      - app.json
+      - package.json
+      - package-lock.json
+      - plugins/**
+      - modules/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: android-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VARIANT: development
+  EXPO_NO_DOTENV: '1'
+  EXPO_PUBLIC_FIREBASE_ANALYTICS_ENABLED: 'false'
+  EXPO_PUBLIC_SENTRY_DSN: ''
+  SENTRY_DISABLE_AUTO_UPLOAD: 'true'
+  SENTRY_NO_UPLOAD: '1'
+
+jobs:
+  quality:
+    name: Verify source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  build-android:
+    name: Build ARM64 Debug APK
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ANDROID_ARTIFACTS_DIR: ${{ runner.temp }}/android-debug-artifacts
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
+      - run: npm ci
+      - name: Generate Android project
+        run: |
+          mkdir -p "$ANDROID_ARTIFACTS_DIR"
+          npx expo prebuild --platform android --no-install 2>&1 | tee "$ANDROID_ARTIFACTS_DIR/prebuild.log"
+      - name: Compile Debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a \
+            --no-daemon --no-parallel --max-workers=2 --console=plain \
+            '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g' \
+            2>&1 | tee "$ANDROID_ARTIFACTS_DIR/build.log"
+      - name: Verify and collect APK
+        run: |
+          apk=android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          "$tools/aapt" dump badging "$apk" > "$ANDROID_ARTIFACTS_DIR/apk-info.txt"
+          grep -q "^package: name='com.huamu013.ZhihuMinusMinus.dev'" "$ANDROID_ARTIFACTS_DIR/apk-info.txt"
+          grep -q '^application-debuggable' "$ANDROID_ARTIFACTS_DIR/apk-info.txt"
+          grep -q "^native-code: 'arm64-v8a'[[:space:]]*$" "$ANDROID_ARTIFACTS_DIR/apk-info.txt"
+          "$tools/apksigner" verify --verbose --print-certs "$apk" > "$ANDROID_ARTIFACTS_DIR/signature.txt"
+          unzip -Z1 "$apk" > "$ANDROID_ARTIFACTS_DIR/apk-files.txt"
+          if grep -qx 'assets/index.android.bundle' "$ANDROID_ARTIFACTS_DIR/apk-files.txt"; then
+            echo 'Debug APK unexpectedly contains a production JavaScript bundle.' >&2
+            exit 1
+          fi
+          cp "$apk" "$ANDROID_ARTIFACTS_DIR/zhihu-dev-arm64-debug.apk"
+          sha=$(sha256sum "$apk" | cut -d ' ' -f 1)
+          jq -n --arg commit "$GITHUB_SHA" --arg sha256 "$sha" \
+            '{commit: $commit, package: "com.huamu013.ZhihuMinusMinus.dev", configuration: "Debug", abi: "arm64-v8a", sha256: $sha256}' \
+            > "$ANDROID_ARTIFACTS_DIR/build-info.json"
+      - name: Upload APK and diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-Debug-arm64-${{ github.run_number }}-${{ github.sha }}
+          path: ${{ runner.temp }}/android-debug-artifacts
+          if-no-files-found: warn
+          retention-days: 7

@@ -44,6 +44,27 @@ npm run start -- --dev-client
 
 Windows 用户请先阅读 [`BUILD_WINDOWS.md`](./BUILD_WINDOWS.md)；其中还记录了命令行 SDK、Gradle 镜像、ABI 和 Sentry 本地构建的常见问题。
 
+#### Windows 开发、GitHub 编译 Android Debug
+
+不想在 Windows 安装 JDK、Android SDK 或 Android Studio 时，使用 fork 的独立工作流 [`android-debug.yml`](../.github/workflows/android-debug.yml)。它在 Ubuntu runner 安装工具链，先执行 `npm ci` 和 `npm run check`，再执行 Android prebuild 和 Gradle `assembleDebug`，不需要 EAS、`EXPO_TOKEN` 或签名 Secret。
+
+1. 推送 `chore/ios-debug-build` 或 `debug/issue-135` 中的工作流、原生配置、原生依赖、plugin 或本地模块变更会触发构建。工作流存在于 fork 默认分支后也可手动运行。普通 JS/TS 修改通过 Metro 加载，无需重新构建。
+2. 在 Android 手机上登录 GitHub，打开成功运行的 Actions 页面，下载 `android-Debug-arm64-<运行编号>-<commit>` artifact，解压并安装其中的 `zhihu-dev-arm64-debug.apk`。允许下载所用浏览器/文件管理器安装未知来源应用。此 APK 仅支持 ARM64 真机，不适用于 x86 模拟器。
+3. 应用名为“知乎-- 调试”，包名为 `com.huamu013.ZhihuMinusMinus.dev`，可与正式版并存；首次安装需要重新登录。使用 Expo 模板的标准 Debug keystore 自动签名，artifact 的 `signature.txt` 可核对证书指纹；如果后续模板变更导致签名不一致，需要卸载旧调试包后安装，卸载会清除该包的数据。
+4. 电脑与手机连接可互通的局域网，在 Windows 当前 PowerShell 窗口运行以下命令，允许 Node.js/Metro 通过防火墙的 TCP 8081：
+
+   ```powershell
+   $env:APP_VARIANT = 'development'
+   $env:EXPO_NO_DOTENV = '1'
+   $env:EXPO_PUBLIC_FIREBASE_ANALYTICS_ENABLED = 'false'
+   $env:EXPO_PUBLIC_SENTRY_DSN = ''
+   npx.cmd expo start --dev-client --lan
+   ```
+
+5. 打开调试应用，从开发客户端连接终端二维码或手动输入 `http://<Windows 局域网 IPv4>:8081`。验证 Fast Refresh 和终端按 `j` 打开的 DevTools 断点。此方式不需要 ADB 或 USB 驱动；包未嵌入业务 JS，运行时需要 Metro。
+
+产物仅保留在 GitHub Actions 7 天，不创建 Release，也不自动下载到 Windows。artifact 同时包含 prebuild/Gradle 日志、包信息、签名信息和记录 commit、ABI、SHA-256 的 `build-info.json`；构建会验证调试包名、debuggable 标记、ARM64 ABI 和签名。Debug 模板已允许局域网明文 HTTP，正式变体的包名和权限不受影响。原生依赖、plugin、权限或应用标识变化后需重新构建安装，JS Fast Refresh 不能替代原生更新。
+
 ### iOS
 
 ```bash
