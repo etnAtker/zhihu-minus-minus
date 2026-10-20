@@ -70,7 +70,9 @@ jobs:
           java-version: '17'
       - name: Install Android SDK components
         run: |
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "cmake;3.22.1" \
+            2>&1 | tee "$ANDROID_ARTIFACTS_DIR/sdk.log"
       - run: npm ci
       - name: Generate Android project
         run: |
