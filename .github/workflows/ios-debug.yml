@@ -1,0 +1,91 @@
+name: iOS Debug (unsigned)
+
+on:
+  push:
+    branches:
+      - chore/ios-debug-build
+      - debug/issue-135
+    paths:
+      - .github/workflows/ios-debug.yml
+      - build-unsigned-ipa.sh
+      - app.config.ts
+      - app.json
+      - package.json
+      - package-lock.json
+      - plugins/**
+      - modules/**
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: Debug connects to Metro; Release embeds JavaScript
+        type: choice
+        default: Debug
+        options:
+          - Debug
+          - Release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VARIANT: development
+  EXPO_NO_DOTENV: '1'
+  EXPO_PUBLIC_FIREBASE_ANALYTICS_ENABLED: 'false'
+  EXPO_PUBLIC_SENTRY_DSN: ''
+  SENTRY_DISABLE_AUTO_UPLOAD: 'true'
+  SENTRY_NO_UPLOAD: '1'
+  IOS_DEBUG_BUNDLE_ID: ${{ vars.IOS_DEBUG_BUNDLE_ID || 'com.huamu013.ZhihuMinusMinus.dev' }}
+
+jobs:
+  quality:
+    name: Verify source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  build-ios:
+    name: Build unsigned iPhone app
+    needs: quality
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      IOS_BUILD_CONFIGURATION: ${{ inputs.configuration || 'Debug' }}
+      DEVELOPER_DIR: ${{ vars.IOS_XCODE_DEVELOPER_DIR || '/Applications/Xcode.app/Contents/Developer' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Verify Xcode toolchain
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          pod --version
+      - run: npm ci
+      - name: Build and package
+        env:
+          IOS_BUILD_ARTIFACTS_DIR: ${{ runner.temp }}/ios-debug-artifacts
+        run: |
+          mkdir -p "$IOS_BUILD_ARTIFACTS_DIR"
+          set -o pipefail
+          bash build-unsigned-ipa.sh 2>&1 | tee "$IOS_BUILD_ARTIFACTS_DIR/build.log"
+      - name: Upload build artifacts and diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ env.IOS_BUILD_CONFIGURATION }}-${{ github.run_number }}-${{ github.sha }}
+          path: ${{ runner.temp }}/ios-debug-artifacts
+          if-no-files-found: warn
+          retention-days: 7

@@ -3,7 +3,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-describe('unsigned iOS build script', () => {
+// This harness needs POSIX executable files and zip. Run it on Linux/macOS CI;
+// Windows bash.exe may launch WSL, which is not the local development runtime.
+const describePosix = process.platform === 'win32' ? describe.skip : describe;
+
+describePosix('unsigned iOS build script', () => {
   let directory;
   let binDirectory;
 
@@ -26,10 +30,16 @@ describe('unsigned iOS build script', () => {
       npx: 'echo "prebuild $*" >> "$IPA_TEST_TRACE"',
       pod: `echo "pods $*" >> "$IPA_TEST_TRACE"\nexit "\${IPA_TEST_POD_EXIT:-0}"`,
       xcodebuild: `echo "xcode $*" >> "$IPA_TEST_TRACE"
-mkdir -p build/Release-iphoneos/ReviewFixture.app
-echo binary > build/Release-iphoneos/ReviewFixture.app/ReviewFixture
+echo "variant=\${APP_VARIANT:-} skip=\${SKIP_BUNDLING:-}" >> "$IPA_TEST_TRACE"
+configuration=Release
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -configuration ]; then configuration="$2"; break; fi
+  shift
+done
+mkdir -p "build/$configuration-iphoneos/ReviewFixture.app"
+echo binary > "build/$configuration-iphoneos/ReviewFixture.app/ReviewFixture"
 if [ "\${IPA_TEST_MULTIPLE_APPS:-0}" = 1 ]; then
-  mkdir -p build/Release-iphoneos/Other.app
+  mkdir -p "build/$configuration-iphoneos/Other.app"
 fi`,
     })) {
       const filename = path.join(binDirectory, name);
@@ -51,6 +61,9 @@ fi`,
         ...process.env,
         PATH: `${binDirectory}${path.delimiter}${process.env.PATH}`,
         IPA_TEST_TRACE: path.join(directory, 'trace.txt'),
+        APP_VARIANT: '',
+        IOS_BUILD_CONFIGURATION: 'Release',
+        IOS_BUILD_ARTIFACTS_DIR: '',
         ...extraEnv,
       },
     });
@@ -96,6 +109,37 @@ fi`,
     expect(
       fs.readFileSync(path.join(directory, 'trace.txt'), 'utf8'),
     ).not.toContain('xcode ');
+  });
+
+  test('builds a separate Debug IPA that loads JavaScript from Metro', () => {
+    const result = run({ IOS_BUILD_CONFIGURATION: 'Debug' });
+    expect(result.status).toBe(0);
+    const trace = fs.readFileSync(path.join(directory, 'trace.txt'), 'utf8');
+    expect(trace).toContain('-configuration Debug');
+    expect(trace).toContain('variant=development skip=1');
+    const ipa = path.join(
+      directory,
+      'zhihu-minus-minus-v1.2.3-dev-debug-unsigned.ipa',
+    );
+    const entries = spawnSync('unzip', ['-Z1', ipa], { encoding: 'utf8' });
+    expect(entries.status).toBe(0);
+    expect(entries.stdout).toContain('Payload/ReviewFixture.app/ReviewFixture');
+    expect(
+      fs.existsSync(
+        path.join(directory, 'zhihu-minus-minus-v1.2.3-unsigned.ipa'),
+      ),
+    ).toBe(false);
+  });
+
+  test('Release clears inherited Debug bundling flags', () => {
+    expect(run({ SKIP_BUNDLING: '1' }).status).toBe(0);
+    const trace = fs.readFileSync(path.join(directory, 'trace.txt'), 'utf8');
+    expect(trace).toContain('variant= skip=\n');
+  });
+
+  test('rejects unknown configurations before modifying native code', () => {
+    expect(run({ IOS_BUILD_CONFIGURATION: 'Profile' }).status).not.toBe(0);
+    expect(fs.existsSync(path.join(directory, 'trace.txt'))).toBe(false);
   });
 
   test('rejects ambiguous workspaces or built apps', () => {

@@ -62,7 +62,39 @@ npx expo run:ios --configuration Debug --device
 
 个人签名安装 Development Build 时，选择证书所属的 Personal Team；证书名称括号里的标识不一定是 Team ID，实际 Team 可由证书主体的 OU 核实。使用 `xcodebuild` 时通过命令参数传入 `DEVELOPMENT_TEAM`，不要把个人 Team 固定进仓库配置。完成构建后用 `xcrun devicectl device install app --device <设备标识> <Debug-iphoneos/*.app>` 安装，再启动 Metro（`npm run start -- --dev-client`）；设备需已配对并开启开发者模式。
 
-只生成本地未签名 IPA 可运行 `bash build-unsigned-ipa.sh`。脚本每次执行 iOS prebuild（`--no-install`）后安装 Pods，自动发现唯一 workspace 和 scheme，禁用本地 Sentry 上传，并把当前版本 IPA 写入项目根目录。它不会改写 `.xcode.env.local` 或删除其他版本产物；已有同版本 IPA 在构建和打包成功后替换。产物已被 Git 忽略，仍需另行签名才能安装。
+在 macOS 只生成本地未签名 IPA 可运行 `bash build-unsigned-ipa.sh`，默认保持 Release 配置。脚本每次执行 iOS prebuild（`--no-install`）后安装 Pods，自动发现唯一 workspace 和 scheme，禁用本地 Sentry 上传，并把当前版本 IPA 写入项目根目录。它不会改写 `.xcode.env.local` 或删除其他版本产物；已有同版本 IPA 在构建和打包成功后替换。产物已被 Git 忽略，仍需另行签名才能安装。
+
+#### Windows 开发、GitHub 编译与 Feather 安装
+
+此流程在 Windows PowerShell 使用 Windows Node.js 22 和 npm，Metro 也在 Windows 运行。Xcode、CocoaPods 和 Bash 打包脚本在 GitHub macOS runner 执行，不需要 WSL、本地 macOS、EAS 或上传签名凭据。仓库已包含 `expo-dev-client`，不使用 Expo Go。
+
+调试设施维护在 fork 的 `chore/ios-debug-build`；问题修复从上游 `main` 单独创建 `fix/issue-135`。需要集成验证时，使用 `debug/issue-135` 合并环境和修复分支；提交给上游的修复分支不合入调试设施。
+
+1. 在 fork 启用 GitHub Actions。提交并推送环境分支后，独立工作流 [`ios-debug.yml`](../.github/workflows/ios-debug.yml) 先在 Ubuntu 执行 `npm ci` 和 `npm run check`，再在 `macos-26` 编译未签名的真机 Debug IPA。它仅在上述两个环境/集成分支的工作流、原生配置、构建脚本或原生依赖变化时自动运行，JS 日常修改通过 Metro 调试，无需重复云编译。
+2. 在成功运行的 Actions 页面下载 `ios-Debug-<运行编号>-<commit>` artifact，解压后将 `*-dev-debug-unsigned.ipa` 导入 Feather，使用现有证书和描述文件签名安装。保持最终安装的 Bundle ID 稳定，不要在每次更新时随机修改。默认调试 Bundle ID 为 `com.huamu013.ZhihuMinusMinus.dev`；如需自定义，先设置 fork 的 Actions Variable `IOS_DEBUG_BUNDLE_ID`，并在本地 Metro 使用相同值。应用名称为“知乎-- 调试”，启动 scheme 为 `zhihu-minus-minus-dev`。
+3. iPhone 开启开发者模式，允许调试应用访问本地网络。电脑和手机连接可互通的局域网，在 Windows 防火墙允许 Node.js/Metro 使用 TCP 8081。Debug 包启动开发客户端后，从启动器连接 Metro 或扫描终端二维码；也可手动输入 `http://<Windows 局域网 IPv4>:8081`。不要使用手机上的 `localhost`。
+4. 在 Windows 仓库根目录运行以下 PowerShell 命令。首次先 `npm ci`；不要混用 WSL/Linux 的 `node_modules`。自定义过 Bundle ID 时，先额外设置 `$env:IOS_DEBUG_BUNDLE_ID = '你的调试 Bundle ID'`。
+
+   ```powershell
+   npm.cmd ci
+   $env:APP_VARIANT = 'development'
+   $env:EXPO_NO_DOTENV = '1'
+   $env:EXPO_PUBLIC_FIREBASE_ANALYTICS_ENABLED = 'false'
+   $env:EXPO_PUBLIC_SENTRY_DSN = ''
+   npx.cmd expo start --dev-client --lan
+   ```
+
+5. 验收应用能连接 Metro、代码修改能 Fast Refresh、终端按 `j` 后 DevTools 能命中 JS 断点。网络检查界面的 Cookie、签名头和完整响应仅供本机检查，不复制到日志、issue 或截图。源码变更后需要更新诊断 manifest 时，重启 Metro 并重新加载应用。
+
+独立工作流不读取 Firebase/Sentry Secrets，也不签名或发布 GitHub Release。调试变体才允许明文 HTTP，供局域网 Metro 使用；未设置 `APP_VARIANT=development` 时继续使用原应用名称、Bundle ID、scheme 和网络权限。退出调试时关闭该 PowerShell 窗口即可，或移除当前窗口设置的环境变量；不要把调试变量写进上游的 `app.json`。
+
+首次工作流尚未位于 fork 默认分支时，使用上述分支 push 触发即可。GitHub 的 `workflow_dispatch` 需要该工作流存在于仓库默认分支；若要在 fork 提供手动构建，可将环境分支设为 fork 默认分支，再在 Actions 选择目标分支与 Debug/Release，不需要向上游提交。默认使用 runner 的 `/Applications/Xcode.app/Contents/Developer`；需要锁定可用 Xcode 时，设置 Actions Variable `IOS_XCODE_DEVELOPER_DIR` 为 runner 上已安装的版本路径，路径不存在会直接失败。
+
+Release 选择仍使用调试应用标识，但嵌入 JS，可脱离 Metro 运行，用于同一份修复的生产模式复验。Debug 与 Release 共享调试 Bundle ID，互相覆盖安装；正式应用可与默认调试 ID 并存。仅 JS/TS 修改通常不用重编 Debug 客户端；改动原生依赖、config plugin、应用标识或权限后必须重新构建安装。Feather 重签后的 entitlement 和系统功能仍须在真机验收，IPA 安装成功不能代替 Metro 连接与功能验证。
+
+构建 artifact 包含 IPA、`build.log`、`build-info.json` 和本次应用 dSYM；Release 另含本次 Metro/Hermes source map。清单记录源码 commit/指纹、实际 Bundle ID、版本、编译配置、工具版本、dSYM UUID 和 IPA SHA-256。符号文件必须与发生问题的包对应，不能从后续重编产物补配。原生崩溃可后续用 pymobiledevice3 或 iPhone 分析数据导出 `.ips`，Windows JS 调试不依赖该工具。
+
+Windows 运行 `npm run check` 时，依赖 POSIX shell、可执行权限和 zip 的 `ios-build-script.test.js` 会明确跳过，避免系统 `bash.exe` 意外启动 WSL；这组回归测试由 Ubuntu 质量门禁执行。Python 测试若因系统 GBK 编码失败，可在当前 PowerShell 设置 `$env:PYTHONUTF8 = '1'` 后重跑。`diagnosticsManifest.test.ts` 的文件符号链接测试要求当前 Windows 进程有创建符号链接的权限；遇到 `EPERM` 时需由用户配置 Windows 开发者模式/权限，或查看 Ubuntu CI 的完整结果，不修改系统设置或伪造通过。Windows Expo CLI 不支持 iOS prebuild，原生工程生成和 Xcode 编译均由 macOS CI 验证，仍需 iPhone 真机验收。
 
 使用 Xcode 27 / iOS 27 SDK 时，UIKit 要求采用 Scene 生命周期，否则应用会在创建界面前退出。当前 SDK 55 由 [`withIosSceneLifecycle`](../plugins/withIosSceneLifecycle.js) 在 prebuild 时迁移窗口启动，并注入 [`ZhihuSceneDelegate.swift`](../plugins/ios/ZhihuSceneDelegate.swift)：以 `UIWindow(windowScene:)` 创建单个主窗口，将冷/热链接与前后台事件转给原有 Expo AppDelegate。生成目录无需手改；插件拒绝覆盖未知模板或已有自定义 Scene 配置，升级 Expo SDK 时须重新核对此适配。平台依据见 [Apple 迁移说明](https://developer.apple.com/documentation/uikit/transitioning-to-the-uikit-scene-based-life-cycle) 与 [Expo Scene 说明](https://github.com/expo/fyi/blob/main/ios-scene-lifecycle.md)。
 

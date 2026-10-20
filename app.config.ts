@@ -119,6 +119,7 @@ function withoutFirebasePlugins(
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const baseConfig = config as ExpoConfig;
+  const developmentVariant = process.env.APP_VARIANT === 'development';
   const firebaseAnalyticsEnabled =
     process.env.EXPO_PUBLIC_FIREBASE_ANALYTICS_ENABLED === 'true';
   const androidGoogleServicesFile = existingPath(
@@ -130,7 +131,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 
   return {
     ...baseConfig,
-    name: baseConfig.name,
+    name: developmentVariant ? `${baseConfig.name} 调试` : baseConfig.name,
+    ...(developmentVariant
+      ? {
+          slug: `${baseConfig.slug}-dev`,
+          scheme: 'zhihu-minus-minus-dev',
+        }
+      : {}),
     plugins: firebaseAnalyticsEnabled
       ? baseConfig.plugins
       : withoutFirebasePlugins(baseConfig.plugins),
@@ -142,6 +149,23 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     ios: {
       ...baseConfig.ios,
+      ...(developmentVariant
+        ? {
+            bundleIdentifier:
+              process.env.IOS_DEBUG_BUNDLE_ID ||
+              `${baseConfig.ios?.bundleIdentifier}.dev`,
+            infoPlist: {
+              ...baseConfig.ios?.infoPlist,
+              NSLocalNetworkUsageDescription:
+                '允许连接电脑上的 Metro 开发服务器以调试应用。',
+              NSAppTransportSecurity: {
+                ...baseConfig.ios?.infoPlist?.NSAppTransportSecurity,
+                NSAllowsArbitraryLoads: true,
+                NSAllowsLocalNetworking: true,
+              },
+            },
+          }
+        : {}),
       ...(iosGoogleServicesFile
         ? { googleServicesFile: iosGoogleServicesFile }
         : {}),
