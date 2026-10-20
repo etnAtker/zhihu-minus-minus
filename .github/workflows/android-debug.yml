@@ -53,9 +53,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      ANDROID_ARTIFACTS_DIR: ${{ runner.temp }}/android-debug-artifacts
       CMAKE_BUILD_PARALLEL_LEVEL: '2'
     steps:
+      - name: Prepare artifact directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/android-debug-artifacts"
+          echo "ANDROID_ARTIFACTS_DIR=$RUNNER_TEMP/android-debug-artifacts" >> "$GITHUB_ENV"
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
@@ -71,7 +74,6 @@ jobs:
       - run: npm ci
       - name: Generate Android project
         run: |
-          mkdir -p "$ANDROID_ARTIFACTS_DIR"
           npx expo prebuild --platform android --no-install 2>&1 | tee "$ANDROID_ARTIFACTS_DIR/prebuild.log"
       - name: Compile Debug APK
         working-directory: android
